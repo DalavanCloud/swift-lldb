@@ -2304,6 +2304,15 @@ lldb::SBValue SBTarget::EvaluateExpression(const char *expr,
   return expr_result;
 }
 
+void SBTarget::CompleteCode(const char *current_code, SBStringList &completions) {
+  lldb_private::StringList result;
+  // TODO: Why this weird dance to get the target? Also why does
+  // EvaluateExpression do an even weirder dance? Should I do that weird dance?
+  TargetSP target_sp(GetSP());
+  target_sp->CompleteCode(current_code, result);
+  completions.AppendList(result);
+}
+
 lldb::addr_t SBTarget::GetStackRedZoneSize() {
   TargetSP target_sp(GetSP());
   if (target_sp) {

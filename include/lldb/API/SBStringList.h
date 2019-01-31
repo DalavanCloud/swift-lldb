@@ -46,6 +46,7 @@ protected:
   friend class SBBreakpoint;
   friend class SBBreakpointLocation;
   friend class SBBreakpointName;
+  friend class SBTarget;
 
   SBStringList(const lldb_private::StringList *lldb_strings);
 

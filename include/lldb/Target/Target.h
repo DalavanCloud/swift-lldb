@@ -1217,6 +1217,9 @@ public:
       const EvaluateExpressionOptions &options = EvaluateExpressionOptions(),
       std::string *fixed_expression = nullptr);
 
+  void CompleteCode(llvm::StringRef current_code,
+                    lldb_private::StringList &completions);
+
   // Look up a symbol by name and type in both the target's symbols and the
   // persistent symbols from the
   // expression parser.  The symbol_type is ignored in that case, for now we

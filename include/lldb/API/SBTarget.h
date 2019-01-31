@@ -893,6 +893,8 @@ public:
   lldb::SBValue EvaluateExpression(const char *expr,
                                    const SBExpressionOptions &options);
 
+  void CompleteCode(const char *current_code, SBStringList &completions);
+
   lldb::addr_t GetStackRedZoneSize();
 
   lldb::SBLaunchInfo GetLaunchInfo() const;

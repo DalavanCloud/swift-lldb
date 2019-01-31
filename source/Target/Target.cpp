@@ -69,6 +69,7 @@
 #include "lldb/Utility/StreamString.h"
 #include "lldb/Utility/Timer.h"
 
+#include "swift/IDE/REPLCodeCompletion.h"
 #include "swift/SIL/SILModule.h"
 
 using namespace lldb;
@@ -2642,6 +2643,117 @@ ExpressionResults Target::EvaluateExpression(
   m_suppress_stop_hooks = old_suppress_value;
 
   return execution_results;
+}
+
+void Target::CompleteCode(llvm::StringRef current_code,
+                          lldb_private::StringList &matches) {
+  //----------------------------------------------------------------------g
+  // If we use the target's SwiftASTContext for completion, it reaaallly
+  // slows down subsequent expressions. The compiler team doesn't have time
+  // to fix this issue currently, so we need to work around it by making
+  // our own copy of the AST and using this separate AST for completion.
+  //----------------------------------------------------------------------
+  Status error;
+// #define USE_SEPARATE_AST_FOR_COMPLETION
+// #if defined(USE_SEPARATE_AST_FOR_COMPLETION)
+//   if (!m_swift_ast_sp) {
+//     SwiftASTContext *target_swift_ast = llvm::dyn_cast_or_null<SwiftASTContext>(
+//         m_target.GetScratchTypeSystemForLanguage(&error, eLanguageTypeSwift));
+//     if (target_swift_ast)
+//       m_swift_ast_sp.reset(new SwiftASTContext(*target_swift_ast));
+//   }
+//   SwiftASTContext *swift_ast = m_swift_ast_sp.get();
+// #else
+//   SwiftASTContext *swift_ast = m_target.GetScratchSwiftASTContext(error);
+// #endif
+
+  SwiftASTContext *swift_ast = GetScratchSwiftASTContext(error, nullptr).get();
+
+  if (swift_ast) {
+    swift::ASTContext *ast = swift_ast->GetASTContext();
+    swift::REPLCompletions completions;
+    static ConstString g_repl_module_name("repl");
+    swift::ModuleDecl *repl_module =
+        swift_ast->GetModule(g_repl_module_name, error);
+    if (repl_module == NULL) {
+      repl_module = swift_ast->CreateModule(g_repl_module_name, error);
+      const swift::SourceFile::ImplicitModuleImportKind implicit_import_kind =
+          swift::SourceFile::ImplicitModuleImportKind::Stdlib;
+      llvm::Optional<unsigned> bufferID;
+      swift::SourceFile *repl_source_file = new (*ast)
+          swift::SourceFile(*repl_module, swift::SourceFileKind::REPL, bufferID,
+                            implicit_import_kind, /*Keep tokens*/false);
+      repl_module->addFile(*repl_source_file);
+    }
+    if (repl_module) {
+      swift::SourceFile &repl_source_file =
+          repl_module->getMainSourceFile(swift::SourceFileKind::REPL);
+
+      llvm::StringRef current_code_ref(current_code);
+      completions.populate(repl_source_file, current_code_ref);
+      llvm::StringRef root = completions.getRoot();
+      if (!root.empty()) {
+        matches.AppendString(root.data(), root.size());
+        //return 1;
+        return;
+      }
+      //                    llvm::StringRef prev_stem =
+      //                    completions.getPreviousStem();
+      //                    llvm::StringRef next_stem =
+      //                    completions.getNextStem();
+      //                    printf ("\nroot: '%*s'", (int)root.size(),
+      //                    root.data());
+      //                    printf ("\nprev_stem: '%*s'", (int)prev_stem.size(),
+      //                    prev_stem.data());
+      //                    printf ("\nnext_stem: '%*s'", (int)next_stem.size(),
+      //                    next_stem.data());
+      //                    printf ("\nvalid: %i", completions.isValid());
+      //                    printf ("\nempty: %i", completions.isEmpty());
+      //                    printf ("\nunique: %i", completions.isUnique());
+
+      // Otherwise, advance through the completion state machine.
+      const swift::CompletionState completion_state = completions.getState();
+      switch (completion_state) {
+      case swift::CompletionState::CompletedRoot: {
+        // We completed the root. Next step is to display the completion list.
+        matches.AppendString(""); // Empty string to indicate no completion,
+        // just display other strings that come after it
+        llvm::ArrayRef<llvm::StringRef> llvm_matches =
+            completions.getCompletionList();
+        for (const auto &llvm_match : llvm_matches) {
+          if (!llvm_match.empty())
+            matches.AppendString(llvm_match.data(), llvm_match.size());
+        }
+        // Don't include the empty string we appended above or we will display
+        // one
+        // too many we need to return the magical value of one less than our
+        // actual matches.
+        // TODO: modify all IOHandlerDelegate::IOHandlerComplete() to use a
+        // CompletionMatches
+        // class that wraps up the "StringList matches;" along with other smarts
+        // so we don't
+        // have to return magic values and incorrect sizes.
+        //return matches.GetSize() - 1;
+        return;
+      } break;
+
+      case swift::CompletionState::DisplayedCompletionList: {
+        // Complete the next completion stem in the cycle.
+        llvm::StringRef stem = completions.getPreviousStem().InsertableString;
+        matches.AppendString(stem.data(), stem.size());
+      } break;
+
+      case swift::CompletionState::Empty:
+        break;
+      case swift::CompletionState::Unique:
+        // We already provided a definitive completion--nothing else to do.
+        break;
+
+      case swift::CompletionState::Invalid:
+        llvm_unreachable("got an invalid completion set?!");
+      }
+    }
+  }
 }
 
 lldb::ExpressionVariableSP
